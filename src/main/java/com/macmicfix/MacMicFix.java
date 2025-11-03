@@ -77,47 +77,96 @@ public class MacMicFix {
     /**
      * Checks microphone permission by attempting to access the microphone
      * Returns true if permission is granted, false otherwise
-     * This will also trigger the macOS permission dialog if permission is not granted
+     * Attempts to trigger the macOS permission dialog if permission is not granted
      */
-private boolean checkMicrophonePermission() {
-    LOGGER.info("MacMicFix: Attempting to access microphone to check permissions...");
-    
-    try {
-        javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
-            44100.0f, 16, 1, true, false
-        );
+    private boolean checkMicrophonePermission() {
+        LOGGER.info("MacMicFix: Checking microphone permissions...");
         
-        DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-        
-        if (!AudioSystem.isLineSupported(info)) {
-            LOGGER.warn("MacMicFix: TargetDataLine not supported by AudioSystem");
-            showPermissionDialog();
-            return false;
-        }
-        
-        TargetDataLine line = null;
+        // First, try to trigger permission dialog using native macOS command
+        // This is more reliable than Java AudioSystem on macOS
         try {
-            line = (TargetDataLine) AudioSystem.getLine(info);
-            line.open(format);
-            LOGGER.info("MacMicFix: Successfully opened microphone - permission is granted!");
-            return true;
-        } catch (LineUnavailableException e) {
-            LOGGER.warn("MacMicFix: Could not open microphone line: {}", e.getMessage());
-            LOGGER.warn("MacMicFix: This typically means microphone permission is NOT granted");
-            return false;
-        } finally {
-            if (line != null && line.isOpen()) {
-                line.close();
-            }
+            LOGGER.info("MacMicFix: Attempting to trigger microphone permission dialog using native command...");
+            
+            // Use a short AppleScript that tries to access the microphone
+            // This will trigger the system permission dialog
+            String script = "try\n" +
+                    "    set audioInput to (load script POSIX file \"/System/Library/ScriptingAdditions/StandardAdditions.osax\")\n" +
+                    "    -- Attempt to access microphone\n" +
+                    "end try";
+            
+            ProcessBuilder pb = new ProcessBuilder("osascript", "-e", 
+                "do shell script \"ffmpeg -f avfoundation -i :0 -t 0.1 -f null - 2>&1 || true\"");
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            
+            // Wait a bit for the dialog to potentially appear
+            Thread.sleep(500);
+            process.destroy();
+            
+            LOGGER.info("MacMicFix: Native command executed");
+        } catch (Exception e) {
+            LOGGER.debug("MacMicFix: Native command approach failed: {}", e.getMessage());
         }
-    } catch (SecurityException e) {
-        LOGGER.error("MacMicFix: Security exception accessing microphone: {}", e.getMessage());
-        return false;
-    } catch (Exception e) {
-        LOGGER.error("MacMicFix: Unexpected error checking microphone permission: {}", e.getMessage(), e);
-        return false;
+        
+        // Now check if we can actually access the microphone
+        try {
+            javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
+                44100.0f, 16, 1, true, false
+            );
+            
+            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+            
+            if (!AudioSystem.isLineSupported(info)) {
+                LOGGER.warn("MacMicFix: TargetDataLine not supported by AudioSystem");
+                return false;
+            }
+            
+            TargetDataLine line = null;
+            try {
+                line = (TargetDataLine) AudioSystem.getLine(info);
+                line.open(format);
+                
+                // Opening the line is not enough - we need to actually try to START it
+                // On macOS, this will trigger the permission check
+                LOGGER.info("MacMicFix: Line opened, now attempting to start recording...");
+                line.start();
+                
+                // Try to actually read some data from the microphone
+                byte[] buffer = new byte[4096];
+                int bytesRead = line.read(buffer, 0, buffer.length);
+                
+                if (bytesRead > 0) {
+                    LOGGER.info("MacMicFix: Successfully read {} bytes from microphone - permission is GRANTED!", bytesRead);
+                    return true;
+                } else {
+                    LOGGER.warn("MacMicFix: Could not read from microphone - permission likely DENIED");
+                    return false;
+                }
+            } catch (LineUnavailableException e) {
+                LOGGER.warn("MacMicFix: Could not open microphone line: {}", e.getMessage());
+                LOGGER.warn("MacMicFix: Microphone permission is likely NOT granted");
+                return false;
+            } catch (SecurityException e) {
+                LOGGER.error("MacMicFix: Security exception - microphone access DENIED: {}", e.getMessage());
+                return false;
+            } catch (Exception e) {
+                LOGGER.warn("MacMicFix: Error accessing microphone: {}", e.getMessage());
+                return false;
+            } finally {
+                if (line != null) {
+                    if (line.isActive()) {
+                        line.stop();
+                    }
+                    if (line.isOpen()) {
+                        line.close();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.error("MacMicFix: Error checking microphone permission: {}", e.getMessage());
+            return false;
+        }
     }
-}
 
 
     /**
@@ -125,16 +174,31 @@ private boolean checkMicrophonePermission() {
      */
     private void showPermissionDialog() {
         try {
-            String script = "display dialog \"Minecraft needs microphone access to use Plasmo Voice. Please allow it in System Settings → Privacy → Microphone.\" buttons {\"OK\"} default button \"OK\" with icon note";
+            // Get the Java runtime path for instructions
+            String javaPath = System.getProperty("java.home") + "/bin/java";
             
-            Process process = Runtime.getRuntime().exec(new String[]{
-                "osascript", "-e", script
-            });
+            String message = "Minecraft needs microphone access for Plasmo Voice.\\n\\n" +
+                    "To grant access:\\n" +
+                    "1. Open System Settings\\n" +
+                    "2. Go to Privacy & Security → Microphone\\n" +
+                    "3. Enable access for Java\\n\\n" +
+                    "Java path: " + javaPath;
             
-            // Wait for the dialog to be dismissed
-            process.waitFor();
+            String script = "display dialog \"" + message + "\" buttons {\"Open System Settings\", \"OK\"} default button \"Open System Settings\" with icon caution";
             
-            LOGGER.info("MacMicFix: Permission dialog shown to user");
+            ProcessBuilder pb = new ProcessBuilder("osascript", "-e", script);
+            Process process = pb.start();
+            
+            // Check which button was clicked
+            int exitCode = process.waitFor();
+            
+            if (exitCode == 0) {
+                // User clicked "Open System Settings"
+                LOGGER.info("MacMicFix: Opening System Settings for user...");
+                Runtime.getRuntime().exec(new String[]{"open", "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone"});
+            }
+            
+            LOGGER.info("MacMicFix: Permission instructions shown to user");
         } catch (IOException e) {
             LOGGER.error("MacMicFix: Failed to show permission dialog", e);
         } catch (InterruptedException e) {
