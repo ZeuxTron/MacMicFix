@@ -1,5 +1,6 @@
 modLoader="javafml"
 loaderVersion="[1.0,)"
+license="All Rights Reserved"
 
 [[mods]]
 modId="macmicfix"
@@ -22,4 +23,3 @@ authors="${mod_authors}"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
     side="CLIENT"
-
