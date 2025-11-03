@@ -79,39 +79,45 @@ public class MacMicFix {
      * Returns true if permission is granted, false otherwise
      * This will also trigger the macOS permission dialog if permission is not granted
      */
-    private boolean checkMicrophonePermission() {
-        try {
-            // Try to access the microphone device
-            // On macOS, this will trigger the permission dialog if permission hasn't been granted
-            javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
-                44100, 16, 1, true, false
-            );
-            
-            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
-            
-            if (!AudioSystem.isLineSupported(info)) {
-                LOGGER.debug("MacMicFix: TargetDataLine not supported");
-                return false;
-            }
-            
-            // Try to open the line - this will trigger permission dialog on macOS if needed
-            try (TargetDataLine line = (TargetDataLine) AudioSystem.getLine(info)) {
-                line.open(format);
-                line.close();
-                LOGGER.info("MacMicFix: Microphone permission is granted");
-                return true;
-            }
-        } catch (LineUnavailableException e) {
-            // This exception can occur if:
-            // 1. Permission is not granted (macOS will show dialog before throwing)
-            // 2. Microphone is in use by another application
-            LOGGER.debug("MacMicFix: Microphone line unavailable: {}", e.getMessage());
-            return false;
-        } catch (Exception e) {
-            LOGGER.debug("MacMicFix: Error checking microphone permission: {}", e.getMessage());
+private boolean checkMicrophonePermission() {
+    LOGGER.info("MacMicFix: Attempting to access microphone to check permissions...");
+    
+    try {
+        javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
+            44100.0f, 16, 1, true, false
+        );
+        
+        DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+        
+        if (!AudioSystem.isLineSupported(info)) {
+            LOGGER.warn("MacMicFix: TargetDataLine not supported by AudioSystem");
+            showPermissionDialog();
             return false;
         }
+        
+        TargetDataLine line = null;
+        try {
+            line = (TargetDataLine) AudioSystem.getLine(info);
+            line.open(format);
+            LOGGER.info("MacMicFix: Successfully opened microphone - permission is granted!");
+            return true;
+        } catch (LineUnavailableException e) {
+            LOGGER.warn("MacMicFix: Could not open microphone line: {}", e.getMessage());
+            LOGGER.warn("MacMicFix: This typically means microphone permission is NOT granted");
+            return false;
+        } finally {
+            if (line != null && line.isOpen()) {
+                line.close();
+            }
+        }
+    } catch (SecurityException e) {
+        LOGGER.error("MacMicFix: Security exception accessing microphone: {}", e.getMessage());
+        return false;
+    } catch (Exception e) {
+        LOGGER.error("MacMicFix: Unexpected error checking microphone permission: {}", e.getMessage(), e);
+        return false;
     }
+}
 
 
     /**
