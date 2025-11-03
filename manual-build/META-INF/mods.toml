@@ -1,0 +1,25 @@
+modLoader="javafml"
+loaderVersion="[1.0,)"
+
+[[mods]]
+modId="macmicfix"
+version="${mod_version}"
+displayName="${mod_name}"
+description="${mod_description}"
+credits="MacMicFix Team"
+authors="${mod_authors}"
+
+[[dependencies.macmicfix]]
+    modId="forge"
+    mandatory=true
+    versionRange="${forge_version_range}"
+    ordering="NONE"
+    side="CLIENT"
+
+[[dependencies.macmicfix]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="${minecraft_version_range}"
+    ordering="NONE"
+    side="CLIENT"
+
