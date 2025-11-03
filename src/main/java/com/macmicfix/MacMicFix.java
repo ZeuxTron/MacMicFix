@@ -1,5 +1,8 @@
 package com.macmicfix;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.network.chat.Component;
+import net.minecraftforge.client.event.ClientChatEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -37,6 +40,33 @@ public class MacMicFix {
         });
     }
 
+    @SubscribeEvent
+    public void onChat(ClientChatEvent event) {
+        String message = event.getMessage();
+        if (message.equalsIgnoreCase("/macmicfix") || message.equalsIgnoreCase("/micfix")) {
+            event.setCanceled(true);
+            
+            if (isMacOS()) {
+                LOGGER.info("MacMicFix: User requested microphone permission instructions");
+                
+                Minecraft mc = Minecraft.getInstance();
+                if (mc.player != null) {
+                    mc.player.sendSystemMessage(Component.literal("§e[MacMicFix] Showing microphone permission instructions..."));
+                }
+                
+                // Show dialog in a separate thread to not block the game
+                new Thread(() -> {
+                    showPermissionDialog();
+                }).start();
+            } else {
+                Minecraft mc = Minecraft.getInstance();
+                if (mc.player != null) {
+                    mc.player.sendSystemMessage(Component.literal("§c[MacMicFix] This mod only works on macOS!"));
+                }
+            }
+        }
+    }
+
     /**
      * Checks if the current operating system is macOS
      */
@@ -50,27 +80,19 @@ public class MacMicFix {
      */
     private void checkAndRequestMicrophonePermission() {
         try {
-            // Check microphone permission by attempting to access it
-            // This will trigger the macOS system permission dialog if permission is not granted
-            boolean hasPermission = checkMicrophonePermission();
+            LOGGER.warn("MacMicFix: IMPORTANT - Java apps on macOS cannot automatically request microphone permission!");
+            LOGGER.warn("MacMicFix: You must MANUALLY grant permission in System Settings");
             
-            if (!hasPermission) {
-                LOGGER.warn("MacMicFix: Microphone permission not granted, showing informational dialog...");
-                
-                // Wait a bit to let the system dialog appear first (if it did)
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                }
-                
-                // Show informational dialog to user explaining how to grant permission
-                showPermissionDialog();
-            } else {
-                LOGGER.info("MacMicFix: Microphone permission is already granted");
-            }
+            // Always show the dialog on macOS because Java AudioSystem check is unreliable
+            // macOS blocks microphone access at system level even if AudioSystem thinks it has access
+            LOGGER.info("MacMicFix: Showing instructions to user...");
+            
+            // Show informational dialog to user explaining how to grant permission
+            showPermissionDialog();
+            
+            LOGGER.info("MacMicFix: To see these instructions again, type /macmicfix in chat");
         } catch (Exception e) {
-            LOGGER.error("MacMicFix: Error checking microphone permissions", e);
+            LOGGER.error("MacMicFix: Error showing microphone permission instructions", e);
         }
     }
 
@@ -177,12 +199,15 @@ public class MacMicFix {
             // Get the Java runtime path for instructions
             String javaPath = System.getProperty("java.home") + "/bin/java";
             
-            String message = "Minecraft needs microphone access for Plasmo Voice.\\n\\n" +
-                    "To grant access:\\n" +
-                    "1. Open System Settings\\n" +
-                    "2. Go to Privacy & Security → Microphone\\n" +
-                    "3. Enable access for Java\\n\\n" +
-                    "Java path: " + javaPath;
+            String message = "⚠️ Minecraft needs microphone access for Plasmo Voice!\\n\\n" +
+                    "Java apps CANNOT auto-request permission on macOS.\\n" +
+                    "You MUST manually grant access:\\n\\n" +
+                    "1. Click 'Open System Settings' below\\n" +
+                    "2. Find 'Java' in the Microphone list\\n" +
+                    "3. Enable the checkbox\\n" +
+                    "4. Restart Minecraft\\n\\n" +
+                    "Java path (if needed):\\n" + javaPath + "\\n\\n" +
+                    "Type /macmicfix in chat to see this again.";
             
             String script = "display dialog \"" + message + "\" buttons {\"Open System Settings\", \"OK\"} default button \"Open System Settings\" with icon caution";
             
