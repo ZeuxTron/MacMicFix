@@ -1,0 +1,13 @@
+allprojects {
+    configurations.all {
+        resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+            if (details.requested.group == 'org.lwjgl' && details.requested.name == 'lwjgl-freetype') {
+                if (details.requested.version == '3.3.3' && details.requested.classifier == 'natives-macos-patch') {
+                    // Replace with natives-macos
+                    details.useTarget group: 'org.lwjgl', name: 'lwjgl-freetype', version: '3.3.3', classifier: 'natives-macos'
+                }
+            }
+        }
+    }
+}
+
