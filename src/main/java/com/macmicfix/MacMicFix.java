@@ -80,20 +80,169 @@ public class MacMicFix {
      */
     private void checkAndRequestMicrophonePermission() {
         try {
-            LOGGER.warn("MacMicFix: IMPORTANT - Java apps on macOS cannot automatically request microphone permission!");
-            LOGGER.warn("MacMicFix: You must MANUALLY grant permission in System Settings");
+            LOGGER.info("MacMicFix: Attempting to trigger microphone permission dialog...");
             
-            // Always show the dialog on macOS because Java AudioSystem check is unreliable
-            // macOS blocks microphone access at system level even if AudioSystem thinks it has access
-            LOGGER.info("MacMicFix: Showing instructions to user...");
+            // Try to trigger the macOS microphone permission dialog
+            // We'll use a native approach to force macOS to show the permission prompt
+            boolean dialogTriggered = triggerMicrophonePermissionDialog();
             
-            // Show informational dialog to user explaining how to grant permission
-            showPermissionDialog();
+            if (dialogTriggered) {
+                LOGGER.info("MacMicFix: Permission dialog should have appeared!");
+                LOGGER.info("MacMicFix: After granting permission, restart Minecraft");
+            } else {
+                LOGGER.warn("MacMicFix: Could not trigger permission dialog automatically");
+                // Show manual instructions as fallback
+                showPermissionDialog();
+            }
             
-            LOGGER.info("MacMicFix: To see these instructions again, type /macmicfix in chat");
+            LOGGER.info("MacMicFix: To see instructions again, type /macmicfix in chat");
         } catch (Exception e) {
-            LOGGER.error("MacMicFix: Error showing microphone permission instructions", e);
+            LOGGER.error("MacMicFix: Error requesting microphone permissions", e);
+            // Show manual instructions as fallback
+            showPermissionDialog();
         }
+    }
+    
+    /**
+     * Attempts to trigger the macOS microphone permission dialog
+     * Uses native macOS APIs to force the system to request permission
+     */
+    private boolean triggerMicrophonePermissionDialog() {
+        LOGGER.info("MacMicFix: Trying to trigger native macOS microphone permission dialog...");
+        
+        // Method 1: Use Swift to access microphone (most reliable on macOS)
+        try {
+            LOGGER.info("MacMicFix: Creating Swift script to trigger permission...");
+            
+            // Create a temporary Swift file
+            String swiftCode = 
+                "import AVFoundation\n" +
+                "import Foundation\n" +
+                "let session = AVCaptureSession()\n" +
+                "let device = AVCaptureDevice.default(for: .audio)\n" +
+                "if let device = device {\n" +
+                "    do {\n" +
+                "        let input = try AVCaptureDeviceInput(device: device)\n" +
+                "        if session.canAddInput(input) {\n" +
+                "            session.addInput(input)\n" +
+                "            session.startRunning()\n" +
+                "            Thread.sleep(forTimeInterval: 0.5)\n" +
+                "            session.stopRunning()\n" +
+                "            print(\"Permission requested\")\n" +
+                "        }\n" +
+                "    } catch {\n" +
+                "        print(\"Error: \\(error)\")\n" +
+                "    }\n" +
+                "}";
+            
+            // Write to temp file
+            java.io.File tempSwift = java.io.File.createTempFile("macmicfix", ".swift");
+            tempSwift.deleteOnExit();
+            java.io.FileWriter writer = new java.io.FileWriter(tempSwift);
+            writer.write(swiftCode);
+            writer.close();
+            
+            // Compile Swift
+            java.io.File tempExec = java.io.File.createTempFile("macmicfix", "");
+            tempExec.deleteOnExit();
+            
+            ProcessBuilder compileBuilder = new ProcessBuilder("swiftc", tempSwift.getAbsolutePath(), "-o", tempExec.getAbsolutePath());
+            compileBuilder.redirectErrorStream(true);
+            Process compileProcess = compileBuilder.start();
+            int compileResult = compileProcess.waitFor();
+            
+            if (compileResult == 0) {
+                LOGGER.info("MacMicFix: Swift compiled, running to trigger permission dialog...");
+                
+                // Run the compiled program
+                ProcessBuilder runBuilder = new ProcessBuilder(tempExec.getAbsolutePath());
+                runBuilder.redirectErrorStream(true);
+                Process runProcess = runBuilder.start();
+                
+                // Read output
+                java.io.BufferedReader reader = new java.io.BufferedReader(
+                    new java.io.InputStreamReader(runProcess.getInputStream())
+                );
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    LOGGER.info("MacMicFix Swift: {}", line);
+                }
+                
+                int runResult = runProcess.waitFor();
+                if (runResult == 0) {
+                    LOGGER.info("MacMicFix: Successfully triggered permission dialog via Swift!");
+                    return true;
+                }
+            } else {
+                LOGGER.debug("MacMicFix: Swift compilation failed");
+            }
+        } catch (Exception e) {
+            LOGGER.debug("MacMicFix: Swift method failed: {}", e.getMessage());
+        }
+        
+        // Method 2: Try using osascript with microphone access
+        try {
+            String script = 
+                "use framework \"AVFoundation\"\\n" +
+                "set session to current application's AVCaptureSession's alloc()'s init()\\n" +
+                "set device to current application's AVCaptureDevice's defaultDeviceWithMediaType:(current application's AVMediaTypeAudio)\\n" +
+                "if device is not missing value then\\n" +
+                "    set deviceInput to current application's AVCaptureDeviceInput's deviceInputWithDevice:device |error|:(missing value)\\n" +
+                "    if deviceInput is not missing value then\\n" +
+                "        session's addInput:deviceInput\\n" +
+                "        session's startRunning()\\n" +
+                "        delay 0.5\\n" +
+                "        session's stopRunning()\\n" +
+                "    end if\\n" +
+                "end if";
+            
+            ProcessBuilder pb = new ProcessBuilder("osascript", "-l", "JavaScript", "-e", script);
+            pb.redirectErrorStream(true);
+            Process process = pb.start();
+            
+            int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                LOGGER.info("MacMicFix: Successfully triggered permission dialog via osascript!");
+                return true;
+            }
+        } catch (Exception e) {
+            LOGGER.debug("MacMicFix: osascript method failed: {}", e.getMessage());
+        }
+        
+        // Method 3: Try Java AudioSystem with actual recording
+        try {
+            LOGGER.info("MacMicFix: Attempting Java AudioSystem with real recording...");
+            javax.sound.sampled.AudioFormat format = new javax.sound.sampled.AudioFormat(
+                44100.0f, 16, 1, true, false
+            );
+            
+            DataLine.Info info = new DataLine.Info(TargetDataLine.class, format);
+            
+            if (AudioSystem.isLineSupported(info)) {
+                TargetDataLine line = null;
+                try {
+                    line = (TargetDataLine) AudioSystem.getLine(info);
+                    line.open(format);
+                    line.start();
+                    
+                    // Actually read data
+                    byte[] buffer = new byte[4096];
+                    line.read(buffer, 0, buffer.length);
+                    
+                    LOGGER.info("MacMicFix: AudioSystem method completed");
+                    return true;
+                } finally {
+                    if (line != null) {
+                        if (line.isActive()) line.stop();
+                        if (line.isOpen()) line.close();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.debug("MacMicFix: Java AudioSystem method failed: {}", e.getMessage());
+        }
+        
+        return false;
     }
 
     /**
@@ -199,15 +348,19 @@ public class MacMicFix {
             // Get the Java runtime path for instructions
             String javaPath = System.getProperty("java.home") + "/bin/java";
             
-            String message = "⚠️ Minecraft needs microphone access for Plasmo Voice!\\n\\n" +
-                    "Java apps CANNOT auto-request permission on macOS.\\n" +
-                    "You MUST manually grant access:\\n\\n" +
-                    "1. Click 'Open System Settings' below\\n" +
-                    "2. Find 'Java' in the Microphone list\\n" +
-                    "3. Enable the checkbox\\n" +
-                    "4. Restart Minecraft\\n\\n" +
-                    "Java path (if needed):\\n" + javaPath + "\\n\\n" +
-                    "Type /macmicfix in chat to see this again.";
+            String message = "⚠️ IMPORTANT: Microphone Permission\\n\\n" +
+                    "The mod tried to trigger the permission dialog.\\n\\n" +
+                    "If a dialog appeared: Grant permission & restart Minecraft\\n\\n" +
+                    "If NO dialog appeared:\\n" +
+                    "This can happen if you previously denied permission.\\n\\n" +
+                    "Solution:\\n" +
+                    "1. Open Terminal and run:\\n" +
+                    "   tccutil reset Microphone\\n" +
+                    "2. Restart Minecraft\\n" +
+                    "3. Grant permission when asked\\n\\n" +
+                    "Or manually add Java to System Settings:\\n" +
+                    "Privacy & Security → Microphone → Add Java\\n\\n" +
+                    "Type /macmicfix in chat to retry.";
             
             String script = "display dialog \"" + message + "\" buttons {\"Open System Settings\", \"OK\"} default button \"Open System Settings\" with icon caution";
             
